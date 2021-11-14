@@ -1,72 +1,57 @@
 #![no_std]
 #![no_main]
 #![feature(asm)]
-use core::panic::PanicInfo;
+#![feature(global_asm)]
+#![feature(panic_info_message)]
+#![feature(alloc_error_handler)]
 
-#[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
-    loop {}
-}
+extern crate alloc;
 
+#[macro_use]
+extern crate bitflags;
 
-const SYSCALL_EXIT: usize = 93;
+#[macro_use]
+mod console;
+mod lang_items;
+mod sbi;
+mod syscall;
+mod trap;
+mod loader;
+mod config;
+mod task;
+mod timer;
+mod sync;
+mod mm;
 
-fn syscall(id: usize, args: [usize; 3]) -> isize {
-    let mut ret: isize;
-    unsafe {
-        asm!("ecall",
-             in("x10") args[0],
-             in("x11") args[1],
-             in("x12") args[2],
-             in("x17") id,
-             lateout("x10") ret
-        );
+global_asm!(include_str!("entry.asm"));
+global_asm!(include_str!("link_app.S"));
+
+fn clear_bss() {
+    extern "C" {
+        fn sbss();
+        fn ebss();
     }
-    ret
-}
-
-pub fn sys_exit(xstate: i32) -> isize {
-    syscall(SYSCALL_EXIT, [xstate as usize, 0, 0])
+    unsafe {
+        core::slice::from_raw_parts_mut(
+            sbss as usize as *mut u8,
+            ebss as usize - sbss as usize,
+        ).fill(0);
+    }
 }
 
 #[no_mangle]
-extern "C" fn _start() {
-    println!("Hello, world!");
-    sys_exit(9);
-}
-
-const SYSCALL_WRITE: usize = 64;
-
-pub fn sys_write(fd: usize, buffer: &[u8]) -> isize {
-  syscall(SYSCALL_WRITE, [fd, buffer.as_ptr() as usize, buffer.len()])
-}
-
-struct Stdout;
-
-impl Write for Stdout {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        sys_write(1, s.as_bytes());
-        Ok(())
-    }
-}
-
-pub fn print(args: fmt::Arguments) {
-    Stdout.write_fmt(args).unwrap();
-}
-
-
-use core::fmt::{self, Write};
-
-#[macro_export]
-macro_rules! print {
-    ($fmt: literal $(, $($arg: tt)+)?) => {
-        $crate::console::print(format_args!($fmt $(, $($arg)+)?));
-    }
-}
-
-#[macro_export]
-macro_rules! println {
-    ($fmt: literal $(, $($arg: tt)+)?) => {
-        print(format_args!(concat!($fmt, "\n") $(, $($arg)+)?));
-    }
+pub fn rust_main() -> ! {
+    clear_bss();
+    println!("[kernel] Hello, world!");
+    mm::init();
+    println!("[kernel] back to world!");
+    mm::remap_test();
+    task::add_initproc();
+    println!("after initproc!");
+    trap::init();
+    trap::enable_timer_interrupt();
+    timer::set_next_trigger();
+    loader::list_apps();
+    task::run_tasks();
+    panic!("Unreachable in rust_main!");
 }
