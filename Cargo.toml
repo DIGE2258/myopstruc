@@ -12,4 +12,3 @@ buddy_system_allocator = "0.6"
 spin = "0.7.0"
 bitflags = "1.2.1"
 xmas-elf = "0.7.0"
-
